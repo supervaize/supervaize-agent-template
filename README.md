@@ -20,7 +20,7 @@
 python3 -m venv .venv
 source .venv/bin/activate              # Windows PowerShell: .\.venv\Scripts\Activate.ps1
 pip install supervaizer pytest
-python -m pytest -q                    # 13 tests
+python -m pytest -q                    # 16 tests
 supervaizer start --local              # try it without Studio
 supervaizer login                      # writes the Studio variables to .env
 python verify_agent.py                 # tells you what is missing

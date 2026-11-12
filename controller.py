@@ -11,7 +11,8 @@ What it already handles, so you don't have to:
   - one failing item does not stop the others
   - a human approves (or rejects) the run before it is marked completed
   - a Studio workspace only sees its own jobs
-  - state is written to DATA_DIR/<job>/state.json so a restart does not lose finished jobs
+  - state is written to DATA_DIR/<job>/state.json so a restart does not lose finished jobs;
+    a job that was running during the restart is closed as failed, and a retried start is not run twice
 Wire it to the SDK in supervaizer_control.py.
 """
 from __future__ import annotations
@@ -75,15 +76,29 @@ class Store:
         self.folder = Path(folder or os.environ.get("DATA_DIR") or Path(__file__).resolve().parent / "data")
         self.folder.mkdir(parents=True, exist_ok=True)
         self.jobs: dict[str, dict] = {}
-        self.starts: dict[str, tuple[str, dict]] = {}
+        self.starts_file = self.folder / "starts.json"
+        # idempotency key -> [input fingerprint, first result]; on disk, so a retry after a restart starts nothing
+        self.starts: dict[str, list] = (
+            json.loads(self.starts_file.read_text(encoding="utf-8")) if self.starts_file.exists() else {})
         self.stopped: set[str] = set()
         self.lock = threading.RLock()
+
+    def remember_start(self, key: str, fingerprint: str, result: dict) -> None:
+        with self.lock:
+            self.starts[key] = [fingerprint, result]
+            self.starts_file.write_text(json.dumps(self.starts, ensure_ascii=False, default=str), encoding="utf-8")
 
     def read(self, job_id: str) -> dict | None:
         with self.lock:
             f = self.folder / job_id / "state.json"
             if job_id not in self.jobs and f.exists():
-                self.jobs[job_id] = json.loads(f.read_text(encoding="utf-8"))
+                state = json.loads(f.read_text(encoding="utf-8"))
+                # Read from disk = started by an earlier process. If it is still "active", its worker is gone.
+                # ponytail: assumes one process per DATA_DIR; with several, keep the work in a shared queue instead.
+                if state["job"]["status"] == "active":
+                    self.write(job_id, _interrupted(state))
+                else:
+                    self.jobs[job_id] = state
             return self.jobs.get(job_id)
 
     def write(self, job_id: str, state: dict) -> None:
@@ -100,6 +115,18 @@ def snapshot(job_id: str, mission_id: str, agent_slug: str, cases: list[dict], s
                     "source": {"type": "fresh_start"},
                     "information": {"cost": {"total_cost": total}, **info}},
             "cases": cases}
+
+
+def _interrupted(state: dict) -> dict:
+    """Close a job whose worker was lost in a restart, so the operator does not wait for it forever."""
+    run = next(c for c in state["cases"] if c["lane"] == "run")
+    for step in run["steps"]:
+        if step["status"] == "active":
+            step["status"] = "failed"
+    run["steps"].append({"id": f"{state['job']['id']}-run-interrupted", "activity": "operation",
+                         "status": "completed", "title": "Interrupted by a restart — start a new run", "cost": 0.0})
+    run["status"] = state["job"]["status"] = "failed"
+    return state
 
 
 class Controller:
@@ -165,7 +192,7 @@ class Controller:
         self.pool.submit(self._work, job_id, mission, items, info)
         result = _ok("job.started", job_id=job_id, status="active", job_state=copy.deepcopy(self.store.read(job_id)))
         if key:
-            self.store.starts[key] = (fingerprint, result)
+            self.store.remember_start(key, fingerprint, result)
         return result
 
     def _work(self, job_id: str, mission: str, items: list[dict], info: dict) -> None:
@@ -242,12 +269,12 @@ class Controller:
                    job_state=state)
 
     def _allowed(self, job_id: str, req: dict) -> dict | None:
-        """A Studio workspace only sees its own jobs."""
+        """A Studio workspace only sees its own jobs. A request with no workspace sees only jobs with no owner."""
         state = self.store.read(job_id)
         if not state:
             return None
         owner = state["job"]["information"].get("workspace")
-        if owner and _ws(req) and owner != _ws(req):
+        if owner and owner != _ws(req):
             return None
         return state
 
