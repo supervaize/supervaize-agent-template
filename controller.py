@@ -305,7 +305,9 @@ def _ws(req: dict) -> str | None:
 
 def _job_id(req: dict) -> str:
     j = str(req.get("job_id") or f"job-{req.get('request_id') or uuid.uuid4().hex[:12]}")
-    return re.sub(r"[^A-Za-z0-9_.\-]+", "-", j)[:120]
+    # The id is a folder name under DATA_DIR. No dot allowed: ".." would leave the folder, "starts.json" would
+    # collide with the idempotency file.
+    return re.sub(r"[^A-Za-z0-9_\-]+", "-", j)[:120]
 
 
 def _ok(effect: str, *, job_state: dict | None = None, **data: Any) -> dict:

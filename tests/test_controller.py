@@ -155,3 +155,13 @@ def test_finished_jobs_survive_a_restart(tmp_path):
     fresh = make(tmp_path)
     r = fresh.action({"action": "job.sync", "job_id": "job-1", "workspace": {"id": "ws-1"}})
     assert r["job_state"]["job"]["status"] == "awaiting"
+
+
+def test_a_job_id_cannot_leave_the_data_folder(tmp_path):
+    data = tmp_path / "data"
+    c = Controller("my-agent", "my-agent-ui.1", demo.list_items, demo.process_item, store=Store(data))
+    for bad in ("..", ".", "starts.json"):
+        wait(c, job=start(c, job=bad)["effects"][0]["job_id"])
+    assert (data / "starts.json").is_file() or not (data / "starts.json").exists()  # never a job folder
+    assert not (tmp_path / "state.json").exists()   # ".." would write here
+    assert not (data / "state.json").exists()        # "." would write here
