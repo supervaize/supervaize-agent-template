@@ -3,13 +3,14 @@ name = "my-agent"
 version = "0.1.0"
 description = "Supervaize-ready agent template"
 requires-python = ">=3.12"
+license = "MPL-2.0"
 dependencies = ["supervaizer>=1.11"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]  # the license = "MPL-2.0" string form needs 77+
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
