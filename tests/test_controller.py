@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -106,6 +107,45 @@ def test_a_workspace_only_sees_its_own_jobs(tmp_path):
     wait(c)
     r = c.action({"action": "job.sync", "job_id": "job-1", "workspace": {"id": "another-ws"}})
     assert r["status"] == "error"
+
+
+def test_a_request_with_no_workspace_does_not_see_a_workspace_job(tmp_path):
+    c = make(tmp_path)
+    start(c)
+    wait(c)
+    assert c.action({"action": "job.sync", "job_id": "job-1"})["status"] == "error"
+
+
+def test_a_retried_start_after_a_restart_does_not_run_twice(tmp_path):
+    calls = []
+
+    def count(item):
+        calls.append(item["id"])
+        return {}, 0.0
+    first = make(tmp_path, process=count)
+    a = start(first, key="k1")
+    wait(first)
+    done = len(calls)
+    fresh = make(tmp_path, process=count)
+    b = start(fresh, key="k1")
+    assert b["effects"] == a["effects"] and len(calls) == done
+    assert start(fresh, items="something else", key="k1")["errors"][0]["code"] == "idempotency_conflict"
+
+
+def test_a_job_running_during_a_restart_is_closed_as_failed(tmp_path):
+    release = threading.Event()
+
+    def blocked(item):
+        release.wait(5)
+        return {}, 0.0
+    start(make(tmp_path, process=blocked))  # the worker of this controller never reports before the "restart"
+    try:
+        fresh = make(tmp_path)
+        state = fresh.action({"action": "job.sync", "job_id": "job-1", "workspace": {"id": "ws-1"}})["job_state"]
+        assert state["job"]["status"] == "failed"
+        assert "restart" in state["cases"][0]["steps"][-1]["title"]
+    finally:
+        release.set()
 
 
 def test_finished_jobs_survive_a_restart(tmp_path):
