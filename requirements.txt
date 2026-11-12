@@ -1,0 +1,2 @@
+supervaizer>=1.11
+# add your agent's own packages below, one per line

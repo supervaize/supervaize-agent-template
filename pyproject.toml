@@ -1,0 +1,16 @@
+[project]
+name = "my-agent"
+version = "0.1.0"
+description = "Supervaize-ready agent template"
+requires-python = ">=3.12"
+dependencies = ["supervaizer>=1.11"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["agent", "controller", "supervaizer_control", "verify_agent"]
